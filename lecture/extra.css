@@ -18,9 +18,17 @@
   font-size: 40px;
 }
 
+.mjx-chtml{ font-size: 105% !important; } /* See https://github.com/yihui/xaringan/issues/143 */
+
 .small { font-size: 70% }
 
 h1 { margin-bottom: -.1ex; }
 h2 { margin-bottom: 0; }
 ul { margin-top: 1ex; }
 ul li { margin-bottom: 1ex; }
+
+img.center {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
