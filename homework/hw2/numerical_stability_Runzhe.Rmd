@@ -1,0 +1,380 @@
+---
+title: 'Homework: numerical linear algebra and stability issues'
+output:
+  html_notebook:
+    df_print: paged
+---
+
+```{r setup, echo=FALSE, warning=F, message=F}
+required_packages <- c('MASS','tidyverse','testit')
+for (pkg in required_packages) {
+  if (!(pkg %in% rownames(installed.packages()))) {
+    install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE)
+}
+source(file.path("../..", "R", "colors.R"))
+```
+
+
+# Problem 1: Kriging / Gaussian process regression
+
+## Part 1: Finishing unfinished business from lecture
+
+Execute a command `git grep -n "sq_exp_cov <- function"` from the root directory of the git repository.
+Paste the output below.
+
+```{zsh, eval=FALSE}
+# Paste the `git grep` output.
+homework/numerical_stability.Rmd:23:Execute a command `git grep -n "sq_exp_cov <- function"` from the root directory of the git repository.
+lecture/finite_prec_and_numerical_stability.Rmd:276:sq_exp_cov <- function(dist, range) {
+lecture/finite_prec_and_numerical_stability.Rmd:303:sq_exp_cov <- function(dist, range) {
+
+```
+
+The grep output tells you where you can find the (failed) kriging / Gaussian process regression example in the lecture source file.
+Copy the synthetic observation from there (the one defined on the range $[0, 0.4]$ and $[0.6, 1.0]$).
+
+```{r}
+# Fill in
+sq_exp_cov <- function(dist, range) {
+  return(exp(-(dist / range)^2))
+}
+
+loc_obs <- c(seq(0, .4, .01), seq(.6, 1, .01))
+n_obs <- length(loc_obs)
+
+set.seed(2021)
+corr_range <- .2
+dist_obs <- as.matrix(dist(loc_obs))
+Sigma_obs <- sq_exp_cov(dist_obs, corr_range)
+y_obs <- mvrnorm(mu = rep(0, n_obs), Sigma = Sigma_obs)
+par(mar = c(4.1, 4.1, 0, 0))
+plot(loc_obs, y_obs, xlab="s", ylab="y(s)", 
+     cex=1.8, cex.lab=1.8, cex.axis=1.8, 
+     col=jhu_color$spiritBlue, frame.plot = F)
+```
+
+Let's now interpolate the missing values in $(0.4, 0.6)$ for real.
+To this end, we use eigen decomposition / pricipal component analysis of the GP.
+We can ignore the components with negligible ($\approx 0$) variance in computing $\boldsymbol{\Sigma}_{\textrm{obs}}^{-1} \boldsymbol{y}_{\textrm{obs}}$ since those components will not affect the final results of kriging/interpolation.
+In other words, we approximate $\boldsymbol{\Sigma}_{\textrm{obs}}^{-1}$ with $\sum_{i = 1}^k \lambda_i^{-1} \boldsymbol{u}_i \boldsymbol{u}_i^\intercal$ in computing $\boldsymbol{\Sigma}_{\textrm{obs}}^{-1} \boldsymbol{y}_{\textrm{obs}}$ for a suitably chosen number of principal components $k$.
+Choose $k$ to capture $99.99$\% of variance in $\boldsymbol{y}_{\textrm{obs}} \sim \mathcal{N}(\boldsymbol{0}, \boldsymbol{\Sigma}_{\textrm{obs}})$.
+
+<font color="blue">
+The conditional mean $E(y_1 | y_2 = a) = \mu_1 + \Sigma_{12}\Sigma_{22}^{-1} (a- \mu_2)$.
+</font>
+
+```{r}
+loc_new <- seq(.41, .59, .01)
+# Compute the conditional mean of GP on the new locations.
+gauss_conditional_mean_eigen_decomp <- function(y_2, mu_1, mu_2, cov_12, cov_22) {
+  eigen_decomp = eigen(cov_22)
+  eigen_vec = eigen_decomp$vectors
+  eigen_val <- eigen_decomp$values
+  eigen_val[which(abs(eigen_val)<1e-10)] = 0 
+  var_prop = cumsum(eigen_val)/sum(eigen_val)
+  k = which(var_prop>0.9999)[1]
+  cov_22_inv_approx = lapply(1:k,function(i){
+    lambda_i_inv = ifelse(eigen_val[i]==0,0,eigen_val[i]^(-1))
+    lambda_i_inv * eigen_vec[,i] %*% t(eigen_vec[,i])
+  }) 
+  cov_22_inv_approx = Reduce('+',cov_22_inv_approx)
+  return(mu_1 + cov_12 %*% cov_22_inv_approx %*% (y_2 - mu_2))
+}
+loc_new <- seq(.41, .59, .01)
+n_new <- length(loc_new)
+
+dist_new <- as.matrix(dist(loc_new))
+Sigma_new <- sq_exp_cov(dist_new, corr_range)
+cross_dist <- as.matrix(dist(c(loc_new, loc_obs)))
+cross_dist <- cross_dist[1:n_new, (n_new + 1):(n_new + n_obs)]
+Sigma_cross <- sq_exp_cov(cross_dist, corr_range)
+mean_obs <- rep(0, n_obs)
+mean_new <- rep(0, n_new)
+y_predicted <- gauss_conditional_mean_eigen_decomp(y_obs, mean_new, mean_obs, Sigma_cross, Sigma_obs)
+```
+
+```{r, fig.dim=c(8, 5), fig.align='center'}
+solid_circle_index <- 19
+plot(
+  # Fill in
+  loc_obs, y_obs,
+  xlab="s", ylab="y(s)", 
+  pch=solid_circle_index,
+  cex.lab=1.4, cex.axis=1.4, 
+  col=jhu_color$heritageBlue, 
+  frame.plot = F
+)
+points(
+  # Fil in
+  loc_new,y_predicted,
+  col = jhu_color$spiritBlue
+)
+```
+
+## Part 2: Quantifying uncertainty in interpolation
+Use the eigen-decomposition technique to compute the conditional covariance 
+$$\textrm{Var}(\boldsymbol{y}_1 \, | \, \boldsymbol{y}_2)
+  = \boldsymbol{\Sigma}_{11} - \boldsymbol{\Sigma}_{12} \boldsymbol{\Sigma}_{22}^{-1} \boldsymbol{\Sigma}_{21},$$
+calculate 95% CI intervals of the interpolation, and plot them.
+
+<font color="blue">
+We calculate CI for each single new point $y_i (i= 1,2,...,n_{new})$  given observations $y_{obs}$,  $Var(y_i | y_{obs}) = \Sigma_{11}^{(ii)}- \Sigma_{12}^{(i \cdot)} \Sigma_{22}^{-1} \Sigma_{21}^{(\cdot i)}$, where $A^{(ij)}$ represents the $(i,j)$-th entry of matrix $A$. Then the 95% CI could be derived as $(E(y_i |y_{obs}) - 1.96 \sqrt{Var(y_i | y_{obs})},E(y_i |y_{obs}) + 1.96 \sqrt{Var(y_i | y_{obs})})$. 
+
+</font>
+
+```{r, fig.dim=c(8, 5), fig.align='center'}
+gauss_conditional_cov_eigen_decomp <- function(cov_11,cov_12, cov_22) {
+  eigen_decomp = eigen(cov_22)
+  eigen_vec = eigen_decomp$vectors
+  eigen_val <- eigen_decomp$values
+  eigen_val[which(abs(eigen_val)<1e-10)] = 0 
+  var_prop = cumsum(eigen_val)/sum(eigen_val)
+  k = which(var_prop>0.9999)[1]
+  cov_22_inv_approx = lapply(1:k,function(i){
+    lambda_i_inv = ifelse(eigen_val[i]==0,0,eigen_val[i]^(-1))
+    lambda_i_inv * eigen_vec[,i] %*% t(eigen_vec[,i])
+  }) 
+  cov_22_inv_approx = Reduce('+',cov_22_inv_approx)
+  return(cov_11 - cov_12 %*% cov_22_inv_approx %*% t(cov_12))
+}
+## variance at a single new point
+var_predicted = sapply(1:length(loc_new),function(i){
+  gauss_conditional_cov_eigen_decomp(Sigma_new[i,i],matrix(Sigma_cross[i,],nrow = 1), Sigma_obs)
+})
+CI_predicted = cbind(y_predicted-qnorm(0.975)*sqrt(var_predicted),y_predicted+qnorm(0.975)*sqrt(var_predicted))
+colnames(CI_predicted)= c("Lower","Upper")
+
+
+solid_circle_index <- 19
+plot(
+  # Fill in
+  loc_obs, y_obs,
+  xlab="s", ylab="y(s)", 
+  pch=solid_circle_index,
+  cex.lab=1.4, cex.axis=1.4, 
+  col=jhu_color$heritageBlue, 
+  frame.plot = F
+)
+points(
+  # Fil in
+  loc_new,y_predicted,
+  col = jhu_color$spiritBlue
+)
+points(
+  # Fil in
+  loc_new,CI_predicted[,1],
+  col = jhu_color$maroon
+)
+points(
+  # Fil in
+  loc_new,CI_predicted[,2],
+  col = jhu_color$maroon
+)
+  
+  
+```
+
+
+## Part 3: Kriging based on an alternative GP covariance function
+
+Albeit popular in certain fields, GP based on squared exponential covariance function is often considered "too smooth" for many applications.
+In particular, its smoothness is partially responsible for the extreme ill-conditioning of its covariance matrix. 
+Here we try carrying out the same interpolation task instead using a _Matern_ covariance function. 
+
+First find the definition and implementation of a Matern covariance using a command `git grep -n "Matern"`.
+```{zsh, eval=FALSE}
+homework/numerical_stability.Rmd:75:Here we try carrying out the same interpolation task instead using a _Matern_ covariance function.
+homework/numerical_stability.Rmd:77:First find the definition and implementation of a Matern covariance using a command `git grep -n "Matern"`.
+lecture/finite_prec_and_numerical_stability.Rmd:255:<!-- Matern covariance with smoothness $\nu = 5/2$: -->
+lecture/iterative_method_brief_tour.Rmd:197:<img src="figure/inla_gmrf_approximatin.png" alt="Markovian approximation of Matern field" class="center" style="width: 80%;"/>
+```
+
+
+
+
+```{r}
+# Definition of the `matern_cov` function.
+# nu = 5/2
+ matern_cov <- function(dist, range) {
+   scaled_dist <- dist / range
+   return(
+   (1 + sqrt(5) * scaled_dist + 5 / 3 * scaled_dist^2)
+     * exp(- sqrt(5) * scaled_dist)
+  ) 
+} 
+
+```
+
+Then use the eigen decomposition technique as before for interpolation and uncertainty quantification.
+Afterward, check the condition number of $\boldsymbol{\Sigma}_{\textrm{obs}}$ and see if you can directly compute $\boldsymbol{\Sigma}_{\textrm{obs}}^{-1} \boldsymbol{y}_{\textrm{obs}}$ using the `solve` function.
+Do we get the same answer as the one based on eigen decomposition?
+
+<font color="blue">
+We derive similar predicted values and CI, but not exactly the same. Because we approximate the $\Sigma_{obs}^{-1}$ using first $k$ components. 
+
+</font>
+
+```{r}
+# Fill in
+## observation
+loc_obs <- c(seq(0, .4, .01), seq(.6, 1, .01))
+n_obs <- length(loc_obs)
+
+set.seed(2021)
+scale_range <- .2
+dist_obs <- as.matrix(dist(loc_obs))
+Sigma_obs <- matern_cov(dist_obs, scale_range)
+y_obs <- mvrnorm(mu = rep(0, n_obs), Sigma = Sigma_obs)
+
+par(mar = c(4.1, 4.1, 0, 0))
+plot(loc_obs, y_obs, xlab="s", ylab="y(s)", 
+     cex=1.8, cex.lab=1.8, cex.axis=1.8, 
+     col=jhu_color$spiritBlue, frame.plot = F)
+
+## interpolation
+loc_new <- seq(.41, .59, .01)
+n_new <- length(loc_new)
+
+dist_new <- as.matrix(dist(loc_new))
+Sigma_new <- matern_cov(dist_new, scale_range)
+cross_dist <- as.matrix(dist(c(loc_new, loc_obs)))
+cross_dist <- cross_dist[1:n_new, (n_new + 1):(n_new + n_obs)]
+Sigma_cross <-  matern_cov(cross_dist, scale_range)
+mean_obs <- rep(0, n_obs)
+mean_new <- rep(0, n_new)
+## eigen_decomp
+y_predicted <- gauss_conditional_mean_eigen_decomp(y_obs, mean_new, mean_obs, Sigma_cross, Sigma_obs)
+
+## solve
+gauss_conditional_mean <- function(y_2, mu_1, mu_2, cov_12, cov_22) {
+  return(mu_1 + cov_12 %*% solve(cov_22, y_2 - mu_2))
+}
+y_predicted_solve <- try(gauss_conditional_mean(y_obs, mean_new, mean_obs, Sigma_cross, Sigma_obs))
+
+## interpolation plot
+solid_circle_index <- 19
+plot(
+  # Fill in
+  loc_obs, y_obs,
+  xlab="s", ylab="y(s)", 
+  pch=solid_circle_index,
+  cex.lab=1.4, cex.axis=1.4, 
+  col=jhu_color$heritageBlue, 
+  frame.plot = F
+)
+points(
+  # Fil in
+  loc_new,y_predicted,
+  col = jhu_color$spiritBlue
+)
+points(
+  # Fil in
+  loc_new,y_predicted_solve,
+  pch = 1,
+  col = jhu_color$orange
+)
+
+```
+```{r}
+# uncertainty quantification.
+var_predicted = sapply(1:length(loc_new),function(i){
+  gauss_conditional_cov_eigen_decomp(Sigma_new[i,i],matrix(Sigma_cross[i,],nrow = 1), Sigma_obs)
+})
+CI_predicted = cbind(y_predicted-qnorm(0.975)*sqrt(var_predicted),y_predicted+qnorm(0.975)*sqrt(var_predicted))
+colnames(CI_predicted)= c("Lower","Upper")
+
+gauss_conditional_cov_solve <- function(cov_11,cov_12, cov_22) {
+  return(cov_11 - cov_12 %*% solve(cov_22,t(cov_12)))
+}
+var_predicted_solve = sapply(1:length(loc_new),function(i){
+  gauss_conditional_cov_solve(Sigma_new[i,i],matrix(Sigma_cross[i,],nrow = 1), Sigma_obs)
+})
+CI_predicted_solve = cbind(y_predicted_solve-qnorm(0.975)*sqrt(var_predicted_solve),y_predicted_solve+qnorm(0.975)*sqrt(var_predicted_solve))
+colnames(CI_predicted_solve)= c("Lower","Upper")
+
+
+
+solid_circle_index <- 19
+plot(
+  # Fill in
+  loc_obs, y_obs,
+  xlab="s", ylab="y(s)", 
+  pch=solid_circle_index,
+  cex.lab=1.4, cex.axis=1.4, 
+  col=jhu_color$heritageBlue, 
+  frame.plot = F
+)
+points(
+  # Fil in
+  loc_new,CI_predicted[,1],
+  col = jhu_color$maroon
+)
+points(
+  # Fil in
+  loc_new,CI_predicted[,2],
+  col = jhu_color$maroon
+)
+points(
+  # Fil in
+  loc_new,CI_predicted_solve[,1],
+  col = jhu_color$yellow
+)
+points(
+  # Fil in
+  loc_new,CI_predicted_solve[,2],
+  col = jhu_color$yellow
+)
+```
+
+**Bonus question:** Symmetric positive-definite matrices can be inverted more quickly via the _Cholesky decomposition_ $\boldsymbol{L} \boldsymbol{L}^\intercal = \boldsymbol{A}$ than via the LU or QR decomposition. 
+<!-- The LU decomposition takes $O(2 n^3 / 3)$, QR $O(4 n^3 / 3)$, and Cholesky $O(n^3 / 3)$ operations. -->
+The Cholesky decomposition also provides the "sqrt" of covariance matrix you need to sample from multivariate Gaussians.
+(Though you might be stuck with the eigen decomposition technique if the matrix is ill-conditioned.)
+Try computing $\boldsymbol{\Sigma}_{\textrm{obs}}^{-1} \boldsymbol{y}_{\textrm{obs}}$ via `chol` and `forward/backsolve`. 
+
+<font color="blue"> 
+Our goal is to solve $\boldsymbol{\Sigma}_{\textrm{obs}} x = \boldsymbol{y}_{\textrm{obs}}$, we plug in the Cholesky decompostion of the observed covariance matrix: $\boldsymbol{\Sigma}_{\textrm{obs}} = \boldsymbol{L} \boldsymbol{L}^\intercal$ and derive $\boldsymbol{L} \boldsymbol{L}^\intercal x = \boldsymbol{y}_{\textrm{obs}}$. The first step is to solve $\boldsymbol{L}^\intercal x$ using `forwardsolve` function $\texttt{forwardsolve}(\boldsymbol{L}, \boldsymbol{y}_{\textrm{obs}})$. Then the second step is to solve $x$ using `backsolve` function $\texttt{backsolve}(\boldsymbol{L}^\intercal, \boldsymbol{L}^\intercal x)$. We further verify that Cholesky decomposition and `solve` function give the same answer.
+
+</font>
+```{r}
+gauss_conditional_mean_chol <- function(y_2, mu_1, mu_2, cov_12, cov_22) {
+  L = t(chol(cov_22))
+  Lstar_x = forwardsolve(L,y_2 - mu_2)
+  x = backsolve(t(L),Lstar_x)
+  return(mu_1 + cov_12 %*% x)
+}
+y_predicted_chol = gauss_conditional_mean_chol(y_obs, mean_new, mean_obs, Sigma_cross, Sigma_obs)
+
+are_all_close <- function(vector1, vector2, rel_tol = 1e-3) {
+  ave_magnitude <- (abs(vector1) + abs(vector2)) / 2
+  coord_rel_err <- abs(vector1 - vector2) / ave_magnitude
+  return(all(coord_rel_err < rel_tol, na.rm = T))
+}
+assert("Chelosky decomposition results are consistent with the solve results", {
+  are_all_close(y_predicted_chol, y_predicted_solve)
+})
+
+solid_circle_index <- 19
+plot(
+  # Fill in
+  loc_obs, y_obs,
+  xlab="s", ylab="y(s)", 
+  pch=solid_circle_index,
+  cex.lab=1.4, cex.axis=1.4, 
+  col=jhu_color$heritageBlue, 
+  frame.plot = F
+)
+points(
+  # Fil in
+  loc_new,y_predicted_solve,
+  col = jhu_color$maroon
+)
+points(
+  # Fil in
+  loc_new,y_predicted_chol,
+  col = jhu_color$yellow
+)
+```
+
