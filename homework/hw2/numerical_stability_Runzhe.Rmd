@@ -1,7 +1,8 @@
 ---
 title: 'Homework: numerical linear algebra and stability issues'
 output:
-  html_notebook
+  html_document:
+    df_print: paged
 ---
 
 ```{r setup, echo=FALSE, warning=F, message=F}
