@@ -92,6 +92,8 @@ class: center, middle, inverse
 e.g. `axpy` from _Basic Linear Algebra Subprograms_ (BLAS):
 $$\bm{y} \gets a \bm{x} + \bm{y}$$
 
+--
+
 ```{r}
 axpy <- function(a, x, y) {
   for (i in 1:length(x)) {
@@ -119,9 +121,24 @@ y <- rep(0.00159, n)
 
 --
 
-```{r, comment=''}
+```{r, eval=FALSE}
 bench::mark(axpy(a, x, y))
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(axpy(a, x, y))
+)
+```
+
+```{r, eval=FALSE}
 bench::mark(axpy_vec(a, x, y))
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(axpy_vec(a, x, y))
+)
 ```
 
 ---
@@ -139,8 +156,14 @@ cat(readLines(file.path('src', 'axpy_c.cpp')), sep = '\n')
 
 --
 
-```{r, comment=''}
+```{r, eval=FALSE}
 bench::mark(axpy_c(a, x, y))
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(axpy_c(a, x, y))
+)
 ```
 
 ---
@@ -180,8 +203,14 @@ cat(readLines(file.path('src', 'axpy_eigen.cpp')), sep = '\n')
 
 --
 
-```{r}
+```{r, eval=FALSE}
 bench::mark(axpy_eigen(a, x, y))
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(axpy_eigen(a, x, y))
+)
 ```
 
 ---
@@ -196,53 +225,14 @@ sourceCpp(file.path('src', 'axpy_arma.cpp'))
 cat(readLines(file.path('src', 'axpy_arma.cpp')), sep = '\n')
 ```
 
-```{r}
+```{r, eval=FALSE}
 bench::mark(axpy_arma(a, x, y))
 ```
 
----
-layout: true
-
-# Details matter in "tight loops"
-
----
-
-Consider two implementations of a `sign` function:
-```{r, message=FALSE}
-sourceCpp(file.path('src', 'sign.cpp'))
-```
-
-```{r, comment='', echo=FALSE}
-cat(readLines(file.path('src', 'sign.cpp'))[5:20], sep = '\n')
-```
-
----
-
-Consider two implementations of a `sign` function:
-```{r, eval=FALSE}
-sourceCpp(file.path('src', 'sign.cpp'))
-```
-
-```{r, comment='', echo=FALSE}
-cat(readLines(file.path('src', 'sign.cpp'))[22:30], sep = '\n')
-```
-
----
-
-Let's compare their performances:
-```{r}
-x <- rnorm(10^6)
-bench::mark(sign_via_if(x))
-bench::mark(sign_via_diff(x))
-```
-
----
-
-Let's try again to make sure... oh, what happened?
-```{r}
-x <- rep(1, 10^6)
-bench::mark(sign_via_if(x))
-bench::mark(sign_via_diff(x))
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(axpy_arma(a, x, y))
+)
 ```
 
 ```{r, include=FALSE}
@@ -266,6 +256,11 @@ class: center, middle, inverse
 
 ---
 
+# Registers: most accessible data storage
+<img src="figure/computing_at_low_level/x86_32bits_registers.png" class="center" style="width: 85%;"/>
+
+---
+
 # What's machine doing behind the scene?
 
 To foster mutual understanding between us and machine, let's look at simple _assembly code_.
@@ -273,11 +268,6 @@ To foster mutual understanding between us and machine, let's look at simple _ass
 --
 
 <img src="figure/computing_at_low_level/divide_int_by_two.png" class="center" style="width: 100%;"/>
-
----
-
-# Registers: most accessible data storage
-<img src="figure/computing_at_low_level/x86_32bits_registers.png" class="center" style="width: 85%;"/>
 
 ---
 
@@ -289,6 +279,7 @@ To foster mutual understanding between us and machine, let's look at simple _ass
 --
 .pull-right[
   "shr" = _logical shift_ to right
+  
   <img src="figure/computing_at_low_level/right_logical_shift.png" class="center" style="width: 100%;"/>
 ]
 
@@ -298,11 +289,22 @@ To foster mutual understanding between us and machine, let's look at simple _ass
 .pull-left[
   <img src="figure/computing_at_low_level/divide_int_by_two_assembly_only.png" class="left" style="width: 100%;"/> 
 ]
---
+.pull-right[
+  "sar" = _arith. shift_ to right
+  
+  <img src="figure/computing_at_low_level/right_arithmetic_shift.png" class="center" style="width: 100%;"/>
+]
+<!-- https://stackoverflow.com/questions/40638335/why-does-the-compiler-generate-a-right-shift-by-31-bits-when-dividing-by-2 -->
+
+---
+
+# Division via bit-shift
+.pull-left[
+  <img src="figure/computing_at_low_level/divide_int_by_two_assembly_only.png" class="left" style="width: 100%;"/> 
+]
 .pull-right[
   <img src="figure/computing_at_low_level/twos_complement_representation_of_integer.png" class="center" style="width: 100%;"/>
 ]
-<!-- https://stackoverflow.com/questions/40638335/why-does-the-compiler-generate-a-right-shift-by-31-bits-when-dividing-by-2 -->
 
 ---
 
@@ -319,4 +321,402 @@ In order to optimize division as bit-shift, a compiler needs to know we are divi
 Floating point arithmetic uses completely different logic:
 
 <img src="figure/computing_at_low_level/divide_double_by_two.png" class="center" style="width: 75%;"/> 
+
+---
+layout: false
+class: center, middle, inverse
+
+# Pipelining "fetch-decode-execute-store"
+## How to keep your CPU "executing"
+
+---
+layout: true
+
+# Example: effect of details in "tight loops"
+
+---
+
+Consider two implementations of a `sign` function:
+```{r, message=FALSE, cache=TRUE}
+sourceCpp(file.path('src', 'sign.cpp'))
+```
+
+```{r, comment='', echo=FALSE}
+cat(readLines(file.path('src', 'sign.cpp'))[5:20], sep = '\n')
+```
+
+---
+
+Consider two implementations of a `sign` function:
+```{r, eval=FALSE}
+sourceCpp(file.path('src', 'sign.cpp'))
+```
+
+```{r, comment='', echo=FALSE}
+cat(readLines(file.path('src', 'sign.cpp'))[22:30], sep = '\n')
+```
+
+---
+
+Let's compare their performances:
+```{r, echo=FALSE}
+x <- rnorm(10^6)
+```
+
+```{r, eval=FALSE}
+x <- rnorm(10^6)
+bench::mark(sign_via_if(x))
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(sign_via_if(x))
+)
+```
+
+```{r, eval=FALSE}
+bench::mark(sign_via_diff(x))
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(sign_via_diff(x))
+)
+```
+
+---
+
+Another run just to make sure... oh, what happened?
+```{r, echo=FALSE}
+x <- rep(1, 10^6)
+```
+
+```{r, eval=FALSE}
+x <- rep(1, 10^6)
+bench::mark(sign_via_if(x))
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(sign_via_if(x))
+)
+```
+
+```{r, eval=FALSE}
+bench::mark(sign_via_diff(x))
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(
+  bench::mark(sign_via_diff(x))
+)
+```
+
+---
+layout: false
+
+# Instruction cycle:<br> $\quad$ fetch-decode-execute-store
+
+<img src="figure/computing_at_low_level/fetch_decode_execute_store_cycle.png" class="center" style="width: 70%;"/> 
+
+---
+
+# Instruction cycle:<br> $\quad$ fetch-decode-execute-store
+
+<img src="figure/computing_at_low_level/fetch_decode_execute_store_cycle_more_details.jpeg" class="center" style="width: 100%;"/> 
+
+---
+
+# "Instruction pipelining" to avoid idle time
+
+<p style="margin-top: -1ex;"> </p>
+<img src="figure/computing_at_low_level/instruction_pipelining.png" class="center" style="width: 70%;"/> 
+
+---
+layout: true
+
+# Keep it simple & predictable for pipelining
+
+---
+
+You can't pipeline if the next action depends on curr one!
+
+---
+
+Let's take another look at the two `sign` implementations:
+
+<img src="figure/computing_at_low_level/sign_via_diff.png" class="center" style="width: 100%;"/> 
+
+---
+
+Let's take another look at the two `sign` implementations:
+
+<img src="figure/computing_at_low_level/sign_via_if.png" class="center" style="width: 100%;"/> 
+
+---
+
+Let's take another look at the two `sign` implementations:
+
+<img src="figure/computing_at_low_level/sign_via_if_optimized.png" class="center" style="width: 100%;"/> 
+
+
+---
+layout: false
+class: center, middle, inverse
+
+# It's about time: <br> worry less about number of arithmetic ops & more about data motion efficiency
+
+---
+
+# CPU got communication issues with RAM <br> .small[(a.k.a. von Neumann bottleneck)]
+<!-- <p style="margin-top: -1ex;"> </p> -->
+<img src="figure/computing_at_low_level/cpu_diagram_with_memory.jpeg" alt="" class="center" style="width: 90%;"/>
+
+---
+layout: true
+
+# Example: row- vs. column-oriented matvec
+
+---
+
+<!-- <p style="margin-top: 3ex;"> </p> -->
+Matvec $\bm{x} \to \bm{A} \bm{x}$ viewed as multiplying rows of $\bm{A}$ with $\bm{x}$:
+
+<img src="figure/computing_at_low_level/row_oriented_matvec.png" class="center" style="width: 85%;"/> 
+
+---
+
+Viewed as adding up cols of $\bm{A}$ multiplied by entries of $\bm{x}$:
+
+<img src="figure/computing_at_low_level/col_oriented_matvec.png" class="center" style="width: 100%;"/> 
+
+<p style="margin-top:-.5ex;"> </p>
+
+.pull-left[
+```{r, eval=FALSE}
+# Row-oriented matvec
+Ax <- rep(0, n_row)
+for (i in 1:n_row) {
+  for (j in 1:n_col) {
+    Ax[i] <- Ax[i] + 
+      A[i, j] * x[j]
+  }
+}
+```
+]
+
+.pull-right[
+```{r, eval=FALSE}
+# Column-oriented matvec
+Ax <- rep(0, n_row)
+for (j in 1:n_col) {
+  for (i in 1:n_row) {
+    Ax[i] <- Ax[i] + 
+      A[i, j] * x[j]
+  }
+}
+```
+]
+
+---
+
+Here is how a row-oriented matvec looks like:
+```{r}
+row_oriented_matvec <- function(A, v) {
+  Av <- rep(0., n_row)
+  for (i in 1:n_row) {
+    Av[i] <- sum(A[i, ] * v)
+  }
+  return(Av)
+}
+```
+and a column-oriented matvec:
+```{r}
+col_oriented_matvec <- function(A, v) {
+  Av <- rep(0., n_row)
+  for (j in 1:n_col) {
+    Av <- Av + A[, j] * v[j]
+  }
+  return(Av)
+}
+```
+
+---
+
+Let's compare their performence:
+
+```{r}
+n_row <- 4096L
+n_col <- 4096L
+A <- matrix(rnorm(n_row * n_col), n_row, n_col)
+v <- rnorm(n_row)
+```
+
+--
+
+```{r, eval=FALSE}
+bench::mark(
+  row_oriented_matvec(A, v)
+)
+```
+
+```{r, echo=FALSE}
+bench_output <- bench::mark(
+  Av_via_row <- row_oriented_matvec(A, v)
+)
+summarize_benchmark(bench_output)
+```
+
+```{r, eval=FALSE}
+bench::mark(
+  col_oriented_matvec(A, v)
+)
+```
+
+```{r, echo=FALSE}
+bench_output <- bench::mark(
+  Av_via_col <- col_oriented_matvec(A, v)
+)
+summarize_benchmark(bench_output)
+```
+
+```{r, echo=FALSE}
+stopifnot(are_all_close(Av_via_col, Av_via_row))
+```
+
+---
+
+Huh, maybe because it's not compiled code? Let's check.
+
+```{r, message=FALSE}
+sourceCpp(file.path('src', 'matvec.cpp'))
+```
+
+```{r, comment='', echo=FALSE}
+cat(readLines(file.path('src', 'matvec.cpp'))[6:17], sep = '\n')
+```
+
+---
+
+Huh, maybe because it's not compiled code? Let's check.
+
+```{r, message=FALSE}
+sourceCpp(file.path('src', 'matvec.cpp'))
+```
+
+```{r, comment='', echo=FALSE}
+cat(readLines(file.path('src', 'matvec.cpp'))[20:31], sep = '\n')
+```
+
+---
+
+Huh, maybe because it's not compiled code? Let's check.
+
+```{r, eval=FALSE}
+bench::mark(
+  row_oriented_matvec_c(A, v)
+)
+```
+
+```{r, echo=FALSE}
+bench_output <- bench::mark(
+  Av_via_row <- row_oriented_matvec_c(A, v)
+)
+summarize_benchmark(bench_output)
+```
+
+```{r, eval=FALSE}
+bench::mark(
+  col_oriented_matvec_c(A, v)
+)
+```
+
+```{r, echo=FALSE}
+bench_output <- bench::mark(
+  Av_via_col <- col_oriented_matvec_c(A, v)
+)
+summarize_benchmark(bench_output)
+```
+
+--
+
+```{r, eval=FALSE}
+bench::mark(A %*% v)
+```
+
+```{r, echo=FALSE}
+summarize_benchmark(bench::mark(A %*% v))
+```
+
+---
+layout: false
+
+# Challenge: feeding data fast enough to CPU
+
+<img src="figure/computing_at_low_level/cache_hierarchy_single_core.png" alt="" class="center" style="width: 70%;"/>
+
+---
+
+# Effect of cache miss and memory latency
+
+Consider the following situation in your computer:
+* CPU keeps itself busy if all data were in L1 cache,
+but need 10 clock cycles to fetch data from L2 cache.
+--
+
+* On average, CPU finds 90% of necessary data in L1 cache, but have to look L2 cache for remaining 10%.
+
+--
+
+How long does it take for CPU to complete 10&nbsp;operations?
+<!-- "how long" = "how many clock cycles" -->
+
+---
+
+# Lesson: optimize your code for data motion
+
+Turns out R arrays are stored in _column major_ order:
+
+<p style="margin-top: 3ex; margin-bottom: 3ex;"> 
+<img src="figure/computing_at_low_level/column_major_matrix.png" alt="" class="center" style="width: 100%;"/>
+</p>
+
+--
+
+So it is more efficient to access its elements column-wise!
+
+---
+
+# Lesson: optimize your code for data motion
+
+In C and Python, arrays are stored in _row major_ order:
+
+<p style="margin-top: 3ex; margin-bottom: 3ex;"> 
+<img src="figure/computing_at_low_level/row_major_matrix.png" alt="" class="center" style="width: 100%;"/>
+</p>
+
+Make sure you choose the right order for double for-loops!
+(Stan uses C arrays, for example.)
+
+---
+
+# Things get even more complicated when trying to parallelize over multiple CPUs
+
+<p style="margin-top: 3ex;"> </p>
+
+<img src="figure/computing_at_low_level/cache_hierarchy_multi_core.png" alt="" class="center" style="width: 100%;"/>
+
+---
+
+<p style="margin-top: 3ex;"> </p>
+<img src="figure/computing_at_low_level/HPCG_results_Nov_2016.png" alt="" class="center" style="width: 100%;"/>
+
+---
+
+<p style="margin-top: 4ex;"> </p>
+
+.large[**Nov 2020 Ranking:**]<br> 
+$\quad$ .large[**Actual over theoretical performance**]
+
+<img src="figure/computing_at_low_level/highest_hpcg_to_peak_ratio_among_top500_Nov_2020.jpeg" alt="" class="center" style="width: 100%;"/>
 
